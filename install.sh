@@ -7,7 +7,6 @@
 
 set -e
 
-# ─── Colors ──────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -17,7 +16,6 @@ BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m'
 
-# ─── Helpers ─────────────────────────────────────────────────
 print_banner() {
   clear
   echo -e "${CYAN}${BOLD}"
@@ -64,41 +62,33 @@ confirm() {
   [[ "$answer" =~ ^[Yy]$ ]]
 }
 
-# ─── Root check ──────────────────────────────────────────────
 [[ $EUID -ne 0 ]] && err "Please run as root: sudo bash install.sh"
 
-# ════════════════════════════════════════════════════════════
-#   BANNER + DISCLAIMER
-# ════════════════════════════════════════════════════════════
 print_banner
 
 echo -e "${BOLD}  This script will install:${NC}"
-echo -e "  ${DIM}• Hotspot on your USB WiFi adapter (admin access point)${NC}"
-echo -e "  ${DIM}• Client connection on built-in WiFi (target network)${NC}"
-echo -e "  ${DIM}• DNS & traffic logger (dnsmasq)${NC}"
-echo -e "  ${DIM}• Web dashboard (Flask) auto-launching on boot${NC}"
+echo -e "  ${DIM}• Hotspot on USB WiFi adapter (admin access point)${NC}"
+echo -e "  ${DIM}• Client WiFi (built-in) for connecting to target networks${NC}"
+echo -e "  ${DIM}• DNS logger + device scanner${NC}"
+echo -e "  ${DIM}• Web dashboard auto-launching on boot${NC}"
 echo ""
 
 if ! confirm "I confirm this is for my own network or I have explicit permission to test"; then
-  echo -e "\n  ${RED}Installer aborted.${NC}\n"
-  exit 0
+  echo -e "\n  ${RED}Installer aborted.${NC}\n"; exit 0
 fi
 
 # ════════════════════════════════════════════════════════════
-#   STEP 1: Detect interfaces
+#   STEP 1: Interfaces
 # ════════════════════════════════════════════════════════════
 step "Detecting WiFi interfaces..."
 
 mapfile -t IFACES < <(iw dev 2>/dev/null | awk '$1=="Interface"{print $2}')
-
-if [[ ${#IFACES[@]} -lt 2 ]]; then
-  err "Need at least 2 WiFi interfaces (built-in + USB adapter). Found: ${IFACES[*]:-none}"
-fi
+[[ ${#IFACES[@]} -lt 2 ]] && err "Need at least 2 WiFi interfaces. Found: ${IFACES[*]:-none}"
 
 echo ""
 echo -e "  ${DIM}Available WiFi interfaces:${NC}"
 for i in "${!IFACES[@]}"; do
-  MAC=$(cat "/sys/class/net/${IFACES[$i]}/address" 2>/dev/null || echo "unknown")
+  MAC=$(cat "/sys/class/net/${IFACES[$i]}/address" 2>/dev/null || echo "?")
   echo -e "  ${BOLD}[$i]${NC} ${IFACES[$i]}  ${DIM}(MAC: $MAC)${NC}"
 done
 echo ""
@@ -109,9 +99,9 @@ CLIENT_IF_IDX=$(ask "Index for TARGET NETWORK interface (built-in)" "0")
 AP_IF="${IFACES[$AP_IF_IDX]}"
 CLIENT_IF="${IFACES[$CLIENT_IF_IDX]}"
 
-[[ -z "$AP_IF" ]]     && err "Invalid hotspot interface index: $AP_IF_IDX"
-[[ -z "$CLIENT_IF" ]] && err "Invalid client interface index: $CLIENT_IF_IDX"
-[[ "$AP_IF" == "$CLIENT_IF" ]] && err "Hotspot and client interfaces must be different"
+[[ -z "$AP_IF" ]]     && err "Invalid hotspot index"
+[[ -z "$CLIENT_IF" ]] && err "Invalid client index"
+[[ "$AP_IF" == "$CLIENT_IF" ]] && err "Interfaces must be different"
 
 ok "Hotspot interface:        $AP_IF"
 ok "Target network interface: $CLIENT_IF"
@@ -126,7 +116,7 @@ AP_SSID=$(ask "Hotspot SSID" "NetWatch-Admin")
 while true; do
   AP_PASS=$(ask_secret "Hotspot password (min 8 chars)")
   [[ ${#AP_PASS} -ge 8 ]] && break
-  echo -e "  ${RED}Password must be at least 8 characters. Try again.${NC}" >/dev/tty
+  echo -e "  ${RED}Must be at least 8 characters.${NC}" >/dev/tty
 done
 AP_CHANNEL=$(ask "WiFi channel" "6")
 AP_IP=$(ask "Hotspot static IP" "192.168.99.1")
@@ -137,11 +127,11 @@ DASHBOARD_PORT=$(ask "Dashboard port" "8080")
 ok "SSID: $AP_SSID  |  IP: $AP_IP  |  Port: $DASHBOARD_PORT"
 
 # ════════════════════════════════════════════════════════════
-#   STEP 3: Target network
+#   STEP 3: Pre-configure target network
 # ════════════════════════════════════════════════════════════
 step "Target network..."
 echo ""
-echo -e "  ${DIM}Pre-configure a target network now, or connect later via the dashboard.${NC}"
+echo -e "  ${DIM}Optionally connect to a target network now, or do it via the dashboard.${NC}"
 echo ""
 
 PRECONFIGURE_TARGET=false
@@ -154,20 +144,18 @@ if confirm "Pre-configure target network now?"; then
 fi
 
 # ════════════════════════════════════════════════════════════
-#   STEP 4: Summary + confirm
+#   STEP 4: Summary
 # ════════════════════════════════════════════════════════════
 echo ""
 echo -e "${CYAN}${BOLD}  ── Configuration Summary ─────────────────────────────────${NC}"
 echo -e "  Hotspot:    ${BOLD}$AP_IF${NC}  SSID: ${BOLD}$AP_SSID${NC}  IP: ${BOLD}$AP_IP${NC}"
 echo -e "  Client:     ${BOLD}$CLIENT_IF${NC}"
 echo -e "  Dashboard:  http://$AP_IP:$DASHBOARD_PORT"
-echo -e "  Target net: $PRECONFIGURE_TARGET ${TARGET_SSID:+($TARGET_SSID)}"
 echo -e "${CYAN}${BOLD}  ───────────────────────────────────────────────────────────${NC}"
 echo ""
 
 if ! confirm "Proceed with installation?"; then
-  echo -e "\n  ${YELLOW}Aborted.${NC}\n"
-  exit 0
+  echo -e "\n  ${YELLOW}Aborted.${NC}\n"; exit 0
 fi
 
 # ════════════════════════════════════════════════════════════
@@ -177,26 +165,14 @@ step "Installing packages..."
 
 echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | debconf-set-selections
 echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | debconf-set-selections
-
 export DEBIAN_FRONTEND=noninteractive
 
 apt-get update -q
 apt-get install -y -q \
-  hostapd \
-  dnsmasq \
-  iptables \
-  iptables-persistent \
-  tcpdump \
-  arp-scan \
-  net-tools \
-  python3 \
-  python3-pip \
-  python3-venv \
-  curl \
-  jq \
-  iw \
-  wireless-tools \
-  rfkill
+  hostapd dnsmasq iptables iptables-persistent \
+  tcpdump arp-scan net-tools wpasupplicant \
+  python3 python3-pip python3-venv \
+  curl jq iw wireless-tools rfkill
 
 rfkill unblock all
 ok "Packages installed"
@@ -211,7 +187,7 @@ mkdir -p "$INSTALL_DIR"/{logs,static,templates}
 
 python3 -m venv "$INSTALL_DIR/venv"
 "$INSTALL_DIR/venv/bin/pip" install -q --upgrade pip
-"$INSTALL_DIR/venv/bin/pip" install -q flask flask-socketio scapy requests
+"$INSTALL_DIR/venv/bin/pip" install -q flask flask-socketio requests
 
 ok "Python venv ready at $INSTALL_DIR"
 
@@ -243,7 +219,7 @@ step "Configuring hostapd..."
 systemctl unmask hostapd 2>/dev/null || true
 systemctl stop hostapd 2>/dev/null || true
 
-cat > /etc/hostapd/netwatch.conf <<EOF
+cat > /etc/hostapd/hostapd.conf <<EOF
 interface=$AP_IF
 driver=nl80211
 ssid=$AP_SSID
@@ -260,7 +236,8 @@ wpa_pairwise=TKIP
 rsn_pairwise=CCMP
 EOF
 
-sed -i 's|#\?DAEMON_CONF=.*|DAEMON_CONF="/etc/hostapd/netwatch.conf"|' /etc/default/hostapd
+# Make sure hostapd uses our config
+sed -i 's|#\?DAEMON_CONF=.*|DAEMON_CONF="/etc/hostapd/hostapd.conf"|' /etc/default/hostapd
 
 ok "hostapd configured"
 
@@ -269,6 +246,7 @@ ok "hostapd configured"
 # ════════════════════════════════════════════════════════════
 step "Configuring dnsmasq..."
 
+systemctl stop dnsmasq 2>/dev/null || true
 [[ -f /etc/dnsmasq.conf ]] && cp /etc/dnsmasq.conf /etc/dnsmasq.conf.bak
 echo "" > /etc/dnsmasq.conf
 
@@ -289,7 +267,7 @@ EOF
 ok "dnsmasq configured"
 
 # ════════════════════════════════════════════════════════════
-#   STEP 10: Tell NetworkManager to leave AP interface alone
+#   STEP 10: NetworkManager — leave AP alone
 # ════════════════════════════════════════════════════════════
 step "Configuring NetworkManager..."
 
@@ -299,13 +277,11 @@ cat > /etc/NetworkManager/conf.d/netwatch-unmanaged.conf <<EOF
 unmanaged-devices=interface-name:$AP_IF
 EOF
 
-systemctl restart NetworkManager 2>/dev/null || true
-sleep 2
-
+nmcli general reload 2>/dev/null || true
 ok "NetworkManager will not touch $AP_IF"
 
 # ════════════════════════════════════════════════════════════
-#   STEP 11: AP interface static IP
+#   STEP 11: Static IP for AP interface
 # ════════════════════════════════════════════════════════════
 step "Setting static IP on $AP_IF..."
 
@@ -325,7 +301,7 @@ systemctl enable systemd-networkd 2>/dev/null || true
 ok "Static IP $AP_IP on $AP_IF"
 
 # ════════════════════════════════════════════════════════════
-#   STEP 12: IP forwarding + NAT
+#   STEP 12: NAT / IP forwarding
 # ════════════════════════════════════════════════════════════
 step "Enabling IP forwarding and NAT..."
 
@@ -350,19 +326,89 @@ ok "NAT enabled"
 # ════════════════════════════════════════════════════════════
 if $PRECONFIGURE_TARGET && [[ -n "$TARGET_SSID" ]]; then
   step "Connecting to $TARGET_SSID..."
-  if [[ -n "$TARGET_PASS" ]]; then
-    nmcli dev wifi connect "$TARGET_SSID" password "$TARGET_PASS" ifname "$CLIENT_IF" 2>/dev/null \
-      && ok "Connected to $TARGET_SSID" \
-      || warn "Could not connect now — use dashboard after reboot"
-  else
-    nmcli dev wifi connect "$TARGET_SSID" ifname "$CLIENT_IF" 2>/dev/null \
-      && ok "Connected to $TARGET_SSID" \
-      || warn "Could not connect now — use dashboard after reboot"
-  fi
+  /opt/netwatch/connect.sh "$CLIENT_IF" "$TARGET_SSID" "$TARGET_PASS" \
+    && ok "Connected to $TARGET_SSID" \
+    || warn "Could not connect — use the dashboard after reboot"
 fi
 
 # ════════════════════════════════════════════════════════════
-#   STEP 14: Dashboard HTML
+#   STEP 14: Network connect helper script
+#   This is called by both the installer and the Flask app
+#   Tries: nmcli WPA2 → nmcli WPA3 → wpa_supplicant → open
+# ════════════════════════════════════════════════════════════
+step "Writing network connect helper..."
+
+cat > /opt/netwatch/connect.sh <<'CONNECTEOF'
+#!/bin/bash
+# Usage: connect.sh <interface> <ssid> [password]
+IFACE="$1"
+SSID="$2"
+PASS="$3"
+
+log() { echo "[netwatch-connect] $*"; }
+
+# Disconnect cleanly first
+nmcli dev disconnect "$IFACE" 2>/dev/null || true
+sleep 1
+
+if [[ -z "$PASS" ]]; then
+  log "Connecting to open network: $SSID"
+  nmcli dev wifi connect "$SSID" ifname "$IFACE" 2>/dev/null && exit 0
+  log "nmcli open failed, trying ip/iw directly"
+  iw dev "$IFACE" connect "$SSID" 2>/dev/null && exit 0
+  exit 1
+fi
+
+# Try nmcli standard (WPA2)
+log "Trying WPA2 connection via nmcli..."
+if nmcli dev wifi connect "$SSID" password "$PASS" ifname "$IFACE" 2>/dev/null; then
+  log "Connected via nmcli WPA2"
+  exit 0
+fi
+
+# Try with key-mgmt SAE (WPA3)
+log "Trying WPA3 (SAE) connection..."
+CONN_NAME="netwatch-$(echo "$SSID" | tr ' ' '_')"
+nmcli connection delete "$CONN_NAME" 2>/dev/null || true
+if nmcli connection add type wifi ifname "$IFACE" con-name "$CONN_NAME" ssid "$SSID" \
+     wifi-sec.key-mgmt sae wifi-sec.psk "$PASS" 2>/dev/null && \
+   nmcli connection up "$CONN_NAME" 2>/dev/null; then
+  log "Connected via nmcli WPA3"
+  exit 0
+fi
+
+# Fallback: wpa_supplicant directly
+log "Falling back to wpa_supplicant..."
+WPA_CONF=$(mktemp /tmp/wpa_XXXXXX.conf)
+cat > "$WPA_CONF" <<WPA
+ctrl_interface=/var/run/wpa_supplicant
+update_config=1
+network={
+    ssid="$SSID"
+    psk="$PASS"
+    key_mgmt=WPA-PSK
+    proto=RSN WPA
+    pairwise=CCMP TKIP
+    group=CCMP TKIP
+}
+WPA
+
+pkill -f "wpa_supplicant.*$IFACE" 2>/dev/null || true
+sleep 1
+wpa_supplicant -B -i "$IFACE" -c "$WPA_CONF" -D nl80211 2>/dev/null
+sleep 4
+dhclient "$IFACE" 2>/dev/null || true
+rm -f "$WPA_CONF"
+
+# Check if we got an IP
+ip -4 addr show "$IFACE" | grep -q "inet " && exit 0 || exit 1
+CONNECTEOF
+chmod +x /opt/netwatch/connect.sh
+
+ok "Connect helper written"
+
+# ════════════════════════════════════════════════════════════
+#   STEP 15: Dashboard HTML
 # ════════════════════════════════════════════════════════════
 step "Writing dashboard..."
 
@@ -372,142 +418,214 @@ cat > "$INSTALL_DIR/templates/index.html" <<'HTMLEOF'
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>NetWatch Dashboard</title>
+<title>NetWatch</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body{background:#0a0e1a;color:#c9d1e0;font-family:'Segoe UI',monospace;min-height:100vh}
-  header{background:#0d1221;border-bottom:1px solid #1e2d4a;padding:16px 24px;display:flex;align-items:center;gap:16px}
+  header{background:#0d1221;border-bottom:1px solid #1e2d4a;padding:16px 24px;display:flex;align-items:center;gap:14px}
   header h1{font-size:1.3rem;color:#4fc3f7;letter-spacing:2px}
-  .dot{width:10px;height:10px;border-radius:50%;background:#4caf50;animation:pulse 2s infinite}
+  .dot{width:10px;height:10px;border-radius:50%;background:#4caf50;animation:pulse 2s infinite;flex-shrink:0}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;padding:20px}
+  .header-right{margin-left:auto;font-size:.8rem;color:#5a7a9a}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;padding:20px}
   .card{background:#0d1221;border:1px solid #1e2d4a;border-radius:10px;padding:20px}
-  .card h2{font-size:.75rem;color:#4fc3f7;letter-spacing:2px;text-transform:uppercase;margin-bottom:14px}
-  .stat{font-size:2rem;font-weight:700;color:#fff}
-  .stat-sub{font-size:.8rem;color:#5a7a9a;margin-top:2px}
-  table{width:100%;border-collapse:collapse;font-size:.82rem}
-  th{text-align:left;color:#4fc3f7;font-weight:600;padding:8px 10px;border-bottom:1px solid #1e2d4a;font-size:.7rem;letter-spacing:1px;text-transform:uppercase}
-  td{padding:9px 10px;border-bottom:1px solid #111827;color:#c9d1e0;word-break:break-all}
-  tr:hover td{background:#111827}
-  .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:.7rem;font-weight:600}
-  .badge-green{background:#1a3a2a;color:#4caf50}
-  .badge-blue{background:#1a2a3a;color:#4fc3f7}
-  .log-box{background:#060a14;border:1px solid #1e2d4a;border-radius:8px;height:220px;overflow-y:auto;padding:12px;font-size:.75rem;color:#7a9abf;font-family:monospace}
-  .log-line{padding:3px 0;border-bottom:1px solid #0d1221}
-  .log-line .ts{color:#4fc3f7}
-  .log-line .domain{color:#81d4fa}
+  .card h2{font-size:.72rem;color:#4fc3f7;letter-spacing:2px;text-transform:uppercase;margin-bottom:12px}
+  .stat{font-size:1.9rem;font-weight:700;color:#fff}
+  .stat-sub{font-size:.78rem;color:#5a7a9a;margin-top:4px}
   .section{padding:0 20px 20px}
-  .section-title{font-size:.75rem;color:#4fc3f7;letter-spacing:2px;text-transform:uppercase;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #1e2d4a;display:flex;align-items:center}
-  form.wifi-form{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
-  form.wifi-form input{background:#060a14;border:1px solid #1e2d4a;color:#c9d1e0;border-radius:6px;padding:8px 12px;font-size:.85rem;flex:1;min-width:140px}
-  form.wifi-form button{background:#1565c0;color:#fff;border:none;border-radius:6px;padding:8px 18px;cursor:pointer;font-size:.85rem;font-weight:600}
-  form.wifi-form button:hover{background:#1976d2}
-  #wifi-status{margin-top:8px;font-size:.8rem}
+  .section-title{font-size:.72rem;color:#4fc3f7;letter-spacing:2px;text-transform:uppercase;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #1e2d4a;display:flex;align-items:center}
   .refresh-btn{background:none;border:1px solid #1e2d4a;color:#4fc3f7;padding:4px 12px;border-radius:6px;font-size:.72rem;cursor:pointer;margin-left:auto}
   .refresh-btn:hover{background:#1e2d4a}
-  .header-right{margin-left:auto;display:flex;align-items:center;gap:14px;font-size:.8rem;color:#5a7a9a}
+  table{width:100%;border-collapse:collapse;font-size:.82rem}
+  th{text-align:left;color:#4fc3f7;font-weight:600;padding:8px 10px;border-bottom:1px solid #1e2d4a;font-size:.7rem;letter-spacing:1px;text-transform:uppercase}
+  td{padding:9px 10px;border-bottom:1px solid #111827;word-break:break-all}
+  tr:hover td{background:#111827}
+  .online{background:#1a3a2a;color:#4caf50;display:inline-block;padding:2px 8px;border-radius:20px;font-size:.7rem;font-weight:600}
+  .log-box{background:#060a14;border:1px solid #1e2d4a;border-radius:8px;height:240px;overflow-y:auto;padding:12px;font-size:.75rem;font-family:monospace}
+  .log-line{padding:3px 0;border-bottom:1px solid #0d1221}
+  .ts{color:#4fc3f7}.domain{color:#81d4fa}.client{color:#a5d6a7}
+  .wifi-form{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+  .wifi-form input,.wifi-form select{background:#060a14;border:1px solid #1e2d4a;color:#c9d1e0;border-radius:6px;padding:8px 12px;font-size:.85rem;flex:1;min-width:130px}
+  .wifi-form button{background:#1565c0;color:#fff;border:none;border-radius:6px;padding:8px 20px;cursor:pointer;font-size:.85rem;font-weight:600;white-space:nowrap}
+  .wifi-form button:hover{background:#1976d2}
+  .wifi-form button:disabled{background:#1a2a3a;color:#5a7a9a;cursor:not-allowed}
+  #wifi-status{margin-top:10px;font-size:.82rem;padding:8px 12px;border-radius:6px;display:none}
+  .status-ok{background:#1a3a2a;color:#4caf50}
+  .status-err{background:#3a1a1a;color:#ef5350}
+  .status-info{background:#1a2a3a;color:#4fc3f7}
+  .networks-list{margin-top:10px;display:flex;flex-wrap:wrap;gap:8px}
+  .network-chip{background:#0d1221;border:1px solid #1e2d4a;border-radius:20px;padding:4px 12px;font-size:.78rem;cursor:pointer;display:flex;align-items:center;gap:6px}
+  .network-chip:hover{border-color:#4fc3f7;color:#4fc3f7}
+  .network-chip .lock{font-size:.65rem;color:#ffca28}
+  .scan-btn{background:none;border:1px solid #1e2d4a;color:#4fc3f7;padding:5px 14px;border-radius:6px;font-size:.75rem;cursor:pointer;margin-left:8px}
+  .scan-btn:hover{background:#1e2d4a}
 </style>
 </head>
 <body>
 <header>
   <div class="dot"></div>
   <h1>⚡ NETWATCH</h1>
-  <div class="header-right">
-    <span id="clock"></span>
-    <span id="hostname-badge" class="badge badge-blue">-</span>
-  </div>
+  <div class="header-right" id="clock"></div>
 </header>
 
 <div class="grid">
   <div class="card">
     <h2>Devices on Network</h2>
     <div class="stat" id="device-count">-</div>
-    <div class="stat-sub">detected via ARP scan</div>
+    <div class="stat-sub">click Scan to discover</div>
   </div>
   <div class="card">
-    <h2>DNS Queries Today</h2>
-    <div class="stat" id="dns-count">-</div>
-    <div class="stat-sub">logged queries</div>
+    <h2>DNS Queries</h2>
+    <div class="stat" id="dns-count">0</div>
+    <div class="stat-sub">this session (live)</div>
   </div>
   <div class="card">
     <h2>Target Network</h2>
-    <div class="stat" id="target-ssid" style="font-size:1.1rem">-</div>
-    <div class="stat-sub" id="target-ip">not connected</div>
+    <div class="stat" id="net-ssid" style="font-size:1rem">Not connected</div>
+    <div class="stat-sub" id="net-ip">-</div>
   </div>
   <div class="card">
-    <h2>Pi Info</h2>
-    <div class="stat" id="pi-mac" style="font-size:1rem">-</div>
-    <div class="stat-sub" id="pi-hostname">-</div>
+    <h2>Pi</h2>
+    <div class="stat" id="pi-host" style="font-size:1.1rem">-</div>
+    <div class="stat-sub" id="pi-mac">-</div>
   </div>
 </div>
 
+<!-- Connect to Network -->
 <div class="section">
-  <div class="section-title">Connect to Target Network</div>
-  <form class="wifi-form" id="wifi-form">
+  <div class="section-title">
+    Connect to Network
+    <button class="scan-btn" onclick="scanNetworks()">↻ Scan for networks</button>
+  </div>
+
+  <div class="networks-list" id="networks-list"></div>
+
+  <div class="wifi-form">
     <input id="ssid" placeholder="Network SSID" autocomplete="off"/>
-    <input id="password" type="password" placeholder="Password"/>
-    <button type="submit">Connect</button>
-  </form>
+    <input id="password" type="password" placeholder="Password (blank if open)"/>
+    <button id="connect-btn" onclick="connectWifi()">Connect</button>
+  </div>
   <div id="wifi-status"></div>
 </div>
 
+<!-- Device list -->
 <div class="section">
   <div class="section-title">
-    Connected Devices
-    <button class="refresh-btn" onclick="loadDevices()">↻ Refresh</button>
+    Devices on Network
+    <button class="refresh-btn" onclick="loadDevices()">↻ Scan</button>
   </div>
   <table>
     <thead><tr><th>IP Address</th><th>MAC Address</th><th>Hostname</th><th>Status</th></tr></thead>
-    <tbody id="devices-tbody"><tr><td colspan="4" style="color:#5a7a9a;text-align:center;padding:20px">Click Refresh to scan</td></tr></tbody>
+    <tbody id="devices-tbody">
+      <tr><td colspan="4" style="color:#5a7a9a;text-align:center;padding:20px">Click Scan after connecting to a network</td></tr>
+    </tbody>
   </table>
 </div>
 
+<!-- DNS log -->
 <div class="section">
-  <div class="section-title">Live DNS Log</div>
-  <div class="log-box" id="dns-log"><span style="color:#5a7a9a">Waiting for DNS queries...</span></div>
+  <div class="section-title">Live DNS Log — Sites Being Visited</div>
+  <div class="log-box" id="dns-log">
+    <span style="color:#5a7a9a">Waiting for DNS queries...</span>
+  </div>
 </div>
 
 <script>
 const socket = io();
 let dnsCount = 0;
 
-setInterval(() => {
-  document.getElementById('clock').textContent = new Date().toLocaleTimeString();
-}, 1000);
+setInterval(() => document.getElementById('clock').textContent = new Date().toLocaleTimeString(), 1000);
+
+function showStatus(msg, type) {
+  const el = document.getElementById('wifi-status');
+  el.textContent = msg;
+  el.className = 'status-' + type;
+  el.style.display = 'block';
+}
 
 async function loadStats() {
   try {
-    const r = await fetch('/api/stats');
+    const d = await fetch('/api/stats').then(r => r.json());
+    document.getElementById('net-ssid').textContent = d.target_ssid || 'Not connected';
+    document.getElementById('net-ip').textContent   = d.target_ip || '-';
+    document.getElementById('pi-host').textContent  = d.hostname || '-';
+    document.getElementById('pi-mac').textContent   = d.pi_mac || '-';
+  } catch(e){}
+}
+
+async function scanNetworks() {
+  const list = document.getElementById('networks-list');
+  list.innerHTML = '<span style="color:#5a7a9a;font-size:.8rem">Scanning...</span>';
+  try {
+    const d = await fetch('/api/scan').then(r => r.json());
+    if (!d.length) { list.innerHTML = '<span style="color:#5a7a9a;font-size:.8rem">No networks found</span>'; return; }
+    list.innerHTML = d.map(n => `
+      <div class="network-chip" onclick="selectNetwork('${n.ssid.replace(/'/g,"\\'")}', ${n.secure})">
+        ${n.secure ? '<span class="lock">🔒</span>' : '<span class="lock">🔓</span>'}
+        ${n.ssid} <span style="color:#5a7a9a;font-size:.7rem">${n.signal}%</span>
+      </div>`).join('');
+  } catch(e) {
+    list.innerHTML = '<span style="color:#ef5350;font-size:.8rem">Scan failed</span>';
+  }
+}
+
+function selectNetwork(ssid, secure) {
+  document.getElementById('ssid').value = ssid;
+  document.getElementById('password').value = '';
+  if (!secure) {
+    document.getElementById('password').placeholder = 'Open network — no password needed';
+  } else {
+    document.getElementById('password').placeholder = 'Password';
+    document.getElementById('password').focus();
+  }
+}
+
+async function connectWifi() {
+  const ssid = document.getElementById('ssid').value.trim();
+  const pass = document.getElementById('password').value;
+  const btn  = document.getElementById('connect-btn');
+  if (!ssid) { showStatus('Enter a network SSID', 'err'); return; }
+  btn.disabled = true;
+  btn.textContent = 'Connecting...';
+  showStatus(`Connecting to "${ssid}"... this may take 15 seconds`, 'info');
+  try {
+    const r = await fetch('/api/connect', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ssid, password: pass})
+    });
     const d = await r.json();
-    document.getElementById('device-count').textContent = d.device_count ?? '-';
-    document.getElementById('dns-count').textContent = d.dns_count ?? '-';
-    document.getElementById('target-ssid').textContent = d.target_ssid || 'Not connected';
-    document.getElementById('target-ip').textContent = d.target_ip || '';
-    document.getElementById('pi-mac').textContent = d.pi_mac || '-';
-    document.getElementById('pi-hostname').textContent = d.pi_hostname || '-';
-    document.getElementById('hostname-badge').textContent = d.pi_hostname || '-';
-  } catch(e) {}
+    if (d.success) {
+      showStatus(`✔ Connected to ${ssid}`, 'ok');
+      loadStats();
+      setTimeout(loadDevices, 3000);
+    } else {
+      showStatus(`✘ Failed: ${d.error || 'Could not connect. Check password or try a different network.'}`, 'err');
+    }
+  } catch(e) {
+    showStatus('✘ Request failed', 'err');
+  }
+  btn.disabled = false;
+  btn.textContent = 'Connect';
 }
 
 async function loadDevices() {
   const tbody = document.getElementById('devices-tbody');
-  tbody.innerHTML = '<tr><td colspan="4" style="color:#5a7a9a;text-align:center;padding:20px">Scanning...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="4" style="color:#5a7a9a;text-align:center;padding:20px">Scanning... (10-15 seconds)</td></tr>';
   try {
-    const r = await fetch('/api/devices');
-    const d = await r.json();
+    const d = await fetch('/api/devices').then(r => r.json());
     if (!d.length) {
-      tbody.innerHTML = '<tr><td colspan="4" style="color:#5a7a9a;text-align:center;padding:20px">No devices found</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="4" style="color:#5a7a9a;text-align:center;padding:20px">No devices found — make sure Pi is connected to a network</td></tr>';
       return;
     }
-    tbody.innerHTML = d.map(dev => `
-      <tr>
-        <td>${dev.ip}</td>
-        <td style="font-family:monospace;font-size:.78rem">${dev.mac}</td>
-        <td>${dev.hostname || '<span style="color:#5a7a9a">unknown</span>'}</td>
-        <td><span class="badge badge-green">Online</span></td>
-      </tr>`).join('');
     document.getElementById('device-count').textContent = d.length;
+    tbody.innerHTML = d.map(dev => `<tr>
+      <td>${dev.ip}</td>
+      <td style="font-family:monospace;font-size:.78rem">${dev.mac}</td>
+      <td>${dev.hostname || '<span style="color:#5a7a9a">unknown</span>'}</td>
+      <td><span class="online">Online</span></td>
+    </tr>`).join('');
   } catch(e) {
     tbody.innerHTML = '<tr><td colspan="4" style="color:#ef5350;text-align:center;padding:20px">Scan failed</td></tr>';
   }
@@ -517,45 +635,21 @@ socket.on('dns_event', data => {
   dnsCount++;
   document.getElementById('dns-count').textContent = dnsCount;
   const box = document.getElementById('dns-log');
-  if (box.querySelector('span')) box.innerHTML = '';
+  const ph = box.querySelector('span');
+  if (ph) box.innerHTML = '';
   const div = document.createElement('div');
   div.className = 'log-line';
-  const parts = data.line.match(/^(\w+\s+\d+\s+[\d:]+).*query\[.*?\]\s+(\S+)/);
-  if (parts) {
-    div.innerHTML = `<span class="ts">${parts[1]}</span> → <span class="domain">${parts[2]}</span>`;
-  } else {
-    div.textContent = data.line;
-  }
+  const m  = data.line.match(/^(\w+\s+\d+\s+[\d:]+).*query\[.*?\]\s+(\S+)\s+from\s+(\S+)/);
+  const m2 = data.line.match(/^(\w+\s+\d+\s+[\d:]+).*query\[.*?\]\s+(\S+)/);
+  if (m)       div.innerHTML = `<span class="ts">${m[1]}</span> <span class="client">${m[3]}</span> → <span class="domain">${m[2]}</span>`;
+  else if (m2) div.innerHTML = `<span class="ts">${m2[1]}</span> → <span class="domain">${m2[2]}</span>`;
+  else         div.textContent = data.line;
   box.insertBefore(div, box.firstChild);
-  if (box.children.length > 200) box.removeChild(box.lastChild);
-});
-
-document.getElementById('wifi-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const ssid = document.getElementById('ssid').value.trim();
-  const pass = document.getElementById('password').value;
-  const status = document.getElementById('wifi-status');
-  if (!ssid) { status.textContent = 'Enter an SSID'; status.style.color = '#ef5350'; return; }
-  status.textContent = 'Connecting...';
-  status.style.color = '#ffca28';
-  try {
-    const r = await fetch('/api/connect', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ssid, password: pass})
-    });
-    const d = await r.json();
-    status.textContent = d.success ? `✔ Connected to ${ssid}` : `✘ Failed: ${d.error || 'unknown'}`;
-    status.style.color = d.success ? '#4caf50' : '#ef5350';
-    if (d.success) { loadStats(); loadDevices(); }
-  } catch(err) {
-    status.textContent = '✘ Request failed';
-    status.style.color = '#ef5350';
-  }
+  if (box.children.length > 300) box.removeChild(box.lastChild);
 });
 
 loadStats();
-setInterval(loadStats, 15000);
+setInterval(loadStats, 10000);
 </script>
 </body>
 </html>
@@ -564,11 +658,11 @@ HTMLEOF
 ok "Dashboard HTML written"
 
 # ════════════════════════════════════════════════════════════
-#   STEP 15: Flask app
+#   STEP 16: Flask backend
 # ════════════════════════════════════════════════════════════
 cat > "$INSTALL_DIR/app.py" <<'PYEOF'
 #!/usr/bin/env python3
-"""NetWatch - Network Monitor Dashboard"""
+"""NetWatch - Raspberry Pi Network Monitor"""
 import os, json, subprocess, re, threading, time
 from flask import Flask, jsonify, request, render_template
 from flask_socketio import SocketIO
@@ -581,22 +675,28 @@ LOG_DIR   = CONFIG['log_dir']
 DNS_LOG   = os.path.join(LOG_DIR, 'dns_queries.log')
 CLIENT_IF = CONFIG['client_interface']
 AP_IF     = CONFIG['ap_interface']
+CONNECT_SH = '/opt/netwatch/connect.sh'
 
 app = Flask(__name__, template_folder='templates')
 app.config['SECRET_KEY'] = os.urandom(24).hex()
 socketio = SocketIO(app, cors_allowed_origins='*')
 
 
-def run_cmd(cmd, timeout=10):
+def run(cmd, timeout=20):
     try:
         r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
-        return r.stdout.strip()
+        return r.stdout.strip(), r.returncode
     except Exception:
-        return ''
+        return '', 1
 
 
-def get_connected_ssid():
-    out = run_cmd('nmcli -t -f active,ssid dev wifi')
+def run_out(cmd, timeout=20):
+    out, _ = run(cmd, timeout)
+    return out
+
+
+def get_ssid():
+    out = run_out('nmcli -t -f active,ssid dev wifi 2>/dev/null')
     for line in out.splitlines():
         if line.startswith('yes:'):
             return line.split(':', 1)[1]
@@ -604,7 +704,7 @@ def get_connected_ssid():
 
 
 def get_ip(iface):
-    out = run_cmd(f'ip -4 addr show {iface}')
+    out = run_out(f'ip -4 addr show {iface}')
     m = re.search(r'inet (\S+)', out)
     return m.group(1) if m else ''
 
@@ -620,29 +720,44 @@ def get_mac(iface):
 def arp_scan():
     devices = []
     seen = set()
-    out = run_cmd(f'arp-scan --interface={CLIENT_IF} --localnet 2>/dev/null', timeout=20)
+    out = run_out(f'arp-scan --interface={CLIENT_IF} --localnet 2>/dev/null', timeout=20)
+    if not out:
+        out = run_out('cat /proc/net/arp')
     for line in out.splitlines():
         m = re.search(r'(\d+\.\d+\.\d+\.\d+)\s+([\da-f:]{17})', line, re.I)
         if m:
             ip, mac = m.group(1), m.group(2).lower()
-            if ip not in seen:
+            if ip not in seen and mac != '00:00:00:00:00:00':
                 seen.add(ip)
-                host = run_cmd(f'getent hosts {ip}')
+                host = run_out(f'getent hosts {ip}')
                 hostname = host.split()[1] if host else ''
                 devices.append({'ip': ip, 'mac': mac, 'hostname': hostname})
     return devices
 
 
-def count_dns_today():
-    try:
-        count = 0
-        with open(DNS_LOG, 'r', errors='ignore') as f:
-            for line in f:
-                if 'query[' in line:
-                    count += 1
-        return count
-    except Exception:
-        return 0
+def scan_networks():
+    networks = []
+    seen = set()
+    # Trigger a rescan
+    run_out(f'nmcli dev wifi rescan ifname {CLIENT_IF} 2>/dev/null', timeout=8)
+    time.sleep(2)
+    out = run_out(f'nmcli -t -f SSID,SIGNAL,SECURITY dev wifi list ifname {CLIENT_IF} 2>/dev/null')
+    for line in out.splitlines():
+        parts = line.split(':')
+        if len(parts) >= 3:
+            ssid   = parts[0].strip()
+            signal = parts[1].strip()
+            sec    = parts[2].strip()
+            if ssid and ssid not in seen:
+                seen.add(ssid)
+                networks.append({
+                    'ssid':   ssid,
+                    'signal': signal,
+                    'secure': sec not in ('', '--')
+                })
+    # Sort by signal strength
+    networks.sort(key=lambda x: int(x['signal']) if x['signal'].isdigit() else 0, reverse=True)
+    return networks
 
 
 @app.route('/')
@@ -653,13 +768,16 @@ def index():
 @app.route('/api/stats')
 def stats():
     return jsonify({
-        'target_ssid':  get_connected_ssid(),
-        'target_ip':    get_ip(CLIENT_IF),
-        'pi_mac':       get_mac(CLIENT_IF),
-        'pi_hostname':  run_cmd('hostname'),
-        'device_count': len(arp_scan()),
-        'dns_count':    count_dns_today(),
+        'target_ssid': get_ssid(),
+        'target_ip':   get_ip(CLIENT_IF),
+        'pi_mac':      get_mac(CLIENT_IF),
+        'hostname':    run_out('hostname'),
     })
+
+
+@app.route('/api/scan')
+def scan():
+    return jsonify(scan_networks())
 
 
 @app.route('/api/devices')
@@ -669,19 +787,29 @@ def devices():
 
 @app.route('/api/connect', methods=['POST'])
 def connect_wifi():
-    data     = request.get_json() or {}
-    ssid     = data.get('ssid', '').strip()
+    data = request.get_json() or {}
+    ssid = data.get('ssid', '').strip()
     password = data.get('password', '').strip()
     if not ssid:
         return jsonify({'success': False, 'error': 'SSID required'})
-    run_cmd(f'nmcli dev disconnect {CLIENT_IF}')
-    time.sleep(1)
+
+    # Call the robust connect shell script
+    cmd = f'bash {CONNECT_SH} "{CLIENT_IF}" "{ssid}"'
     if password:
-        result = run_cmd(f'nmcli dev wifi connect "{ssid}" password "{password}" ifname {CLIENT_IF}', timeout=25)
-    else:
-        result = run_cmd(f'nmcli dev wifi connect "{ssid}" ifname {CLIENT_IF}', timeout=25)
-    success = 'successfully activated' in result.lower() or 'connected' in result.lower()
-    return jsonify({'success': success, 'error': '' if success else result})
+        cmd += f' "{password}"'
+
+    out, code = run(cmd, timeout=30)
+    success = code == 0
+
+    # Double-check by seeing if we got an IP
+    if not success:
+        time.sleep(2)
+        success = bool(get_ip(CLIENT_IF))
+
+    return jsonify({
+        'success': success,
+        'error': '' if success else f'Could not connect. Try: wrong password, WPA3 incompatibility, or network out of range. Details: {out}'
+    })
 
 
 def tail_dns_log():
@@ -694,24 +822,23 @@ def tail_dns_log():
             if line and 'query[' in line:
                 socketio.emit('dns_event', {'line': line.strip()})
             else:
-                time.sleep(0.25)
+                time.sleep(0.2)
 
 
 if __name__ == '__main__':
-    t = threading.Thread(target=tail_dns_log, daemon=True)
-    t.start()
+    threading.Thread(target=tail_dns_log, daemon=True).start()
     port = CONFIG.get('dashboard_port', 8080)
+    print(f'[netwatch] Dashboard at http://{CONFIG.get("ap_ip","?")}:{port}')
     socketio.run(app, host='0.0.0.0', port=port, allow_unsafe_werkzeug=True)
 PYEOF
 
 ok "Flask app written"
 
 # ════════════════════════════════════════════════════════════
-#   STEP 16: Systemd services
+#   STEP 17: Systemd services
 # ════════════════════════════════════════════════════════════
 step "Creating systemd services..."
 
-# AP setup script runs before hostapd to configure the interface
 cat > /usr/local/bin/netwatch-ap-setup.sh <<APEOF
 #!/bin/bash
 AP_IF="$AP_IF"
@@ -724,7 +851,7 @@ chmod +x /usr/local/bin/netwatch-ap-setup.sh
 
 cat > /etc/systemd/system/netwatch-ap.service <<EOF
 [Unit]
-Description=NetWatch - Configure AP Interface
+Description=NetWatch AP Interface Setup
 Before=hostapd.service dnsmasq.service
 After=network-pre.target
 
@@ -741,7 +868,6 @@ cat > /etc/systemd/system/netwatch.service <<EOF
 [Unit]
 Description=NetWatch Dashboard
 After=network.target hostapd.service dnsmasq.service
-Wants=hostapd.service dnsmasq.service
 
 [Service]
 Type=simple
@@ -761,20 +887,19 @@ systemctl enable netwatch-ap.service
 systemctl enable hostapd
 systemctl enable dnsmasq
 systemctl enable netwatch.service
-
-ok "Services registered and enabled"
+ok "Services registered"
 
 # ════════════════════════════════════════════════════════════
-#   STEP 17: Start everything now
+#   STEP 18: Start everything
 # ════════════════════════════════════════════════════════════
 step "Starting services..."
 
 /usr/local/bin/netwatch-ap-setup.sh
 
-systemctl restart hostapd  && ok "hostapd started"   || warn "hostapd failed — run: journalctl -u hostapd -n 30"
-systemctl restart dnsmasq  && ok "dnsmasq started"   || warn "dnsmasq failed — run: journalctl -u dnsmasq -n 30"
+systemctl restart hostapd  && ok "hostapd started"   || warn "hostapd failed — run: journalctl -u hostapd -n 20"
+systemctl restart dnsmasq  && ok "dnsmasq started"   || warn "dnsmasq failed — run: journalctl -u dnsmasq -n 20"
 sleep 2
-systemctl restart netwatch && ok "Dashboard started" || warn "Dashboard failed — run: journalctl -u netwatch -n 30"
+systemctl restart netwatch && ok "Dashboard started" || warn "Dashboard failed — run: journalctl -u netwatch -n 20"
 
 # ════════════════════════════════════════════════════════════
 #   DONE
@@ -788,11 +913,11 @@ echo -e "${NC}"
 echo -e "  ${BOLD}Hotspot SSID:${NC}  $AP_SSID"
 echo -e "  ${BOLD}Dashboard:${NC}     ${CYAN}http://$AP_IP:$DASHBOARD_PORT${NC}"
 echo ""
-echo -e "  ${DIM}1. Connect your phone/laptop to WiFi: '${AP_SSID}'${NC}"
+echo -e "  ${DIM}1. Connect your phone/laptop to WiFi: '$AP_SSID'${NC}"
 echo -e "  ${DIM}2. Open http://$AP_IP:$DASHBOARD_PORT in your browser${NC}"
-echo -e "  ${DIM}3. Use the Connect form to join your target network${NC}"
+echo -e "  ${DIM}3. Click 'Scan for networks' and pick your target network${NC}"
 echo -e "  ${DIM}4. Watch devices and DNS queries appear live${NC}"
 echo ""
-echo -e "  ${DIM}Logs:    tail -f $INSTALL_DIR/logs/dns_queries.log${NC}"
 echo -e "  ${DIM}Status:  systemctl status netwatch hostapd dnsmasq${NC}"
+echo -e "  ${DIM}Logs:    journalctl -u netwatch -f${NC}"
 echo ""
